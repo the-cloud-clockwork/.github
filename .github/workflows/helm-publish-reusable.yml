@@ -13,7 +13,7 @@ on:
         default: "ghcr.io"
         type: string
       registry_namespace:
-        description: "Registry namespace (e.g. the-cloud-clock-work/charts). Auto-computed from repo owner when empty."
+        description: "Registry namespace (e.g. the-cloud-clockwork/charts). Auto-computed from repo owner when empty."
         required: false
         default: ""
         type: string

@@ -7,7 +7,7 @@ Organization-wide GitHub configuration, reusable workflows, and shared templates
 All reusable workflows live in `.github/workflows/` and are referenced as:
 
 ```
-The-Cloud-Clock-Work/.github/.github/workflows/<name>@main
+The-Cloud-Clockwork/.github/.github/workflows/<name>@main
 ```
 
 | Workflow | Purpose | Key Inputs | Secrets |
@@ -46,7 +46,7 @@ permissions:
 
 jobs:
   release:
-    uses: The-Cloud-Clock-Work/.github/.github/workflows/release-reusable.yml@main
+    uses: The-Cloud-Clockwork/.github/.github/workflows/release-reusable.yml@main
     with:
       bump: ${{ inputs.bump }}
     secrets:
@@ -68,7 +68,7 @@ permissions:
 
 jobs:
   build:
-    uses: The-Cloud-Clock-Work/.github/.github/workflows/ghcr-build-reusable.yml@main
+    uses: The-Cloud-Clockwork/.github/.github/workflows/ghcr-build-reusable.yml@main
 ```
 
 ### DockerHub Publish
@@ -82,7 +82,7 @@ on:
 
 jobs:
   push:
-    uses: The-Cloud-Clock-Work/.github/.github/workflows/docker-publish-reusable.yml@main
+    uses: The-Cloud-Clockwork/.github/.github/workflows/docker-publish-reusable.yml@main
     with:
       image_name: my-project
     secrets:
@@ -153,7 +153,7 @@ permissions:
 
 jobs:
   docs-audit:
-    uses: The-Cloud-Clock-Work/.github/.github/workflows/docs-audit-reusable.yml@main
+    uses: The-Cloud-Clockwork/.github/.github/workflows/docs-audit-reusable.yml@main
     with:
       scope: ${{ inputs.scope }}
       anthropic_url_base: ${{ vars.ANTHROPIC_URL_BASE }}

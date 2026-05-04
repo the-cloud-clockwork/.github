@@ -23,7 +23,7 @@ on:
         type: string
       image_name:
         description: |
-          Full image path WITHOUT tag, e.g. ghcr.io/the-cloud-clock-work/agenticore-publisher.
+          Full image path WITHOUT tag, e.g. ghcr.io/the-cloud-clockwork/agenticore-publisher.
           If empty, defaults to ghcr.io/<repository> (lowercased).
         required: false
         default: ""

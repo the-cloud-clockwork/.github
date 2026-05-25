@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: anton
     environment: pypi
     steps:
       - uses: actions/checkout@v4

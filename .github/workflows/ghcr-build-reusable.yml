@@ -55,7 +55,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: anton
     steps:
       - uses: actions/checkout@v4
 

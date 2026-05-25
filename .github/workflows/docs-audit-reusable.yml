@@ -73,7 +73,7 @@ permissions:
 
 jobs:
   docs-audit:
-    runs-on: ubuntu-latest
+    runs-on: anton
     timeout-minutes: ${{ inputs.timeout_minutes }}
 
     steps:

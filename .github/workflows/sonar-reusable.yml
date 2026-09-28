@@ -18,6 +18,16 @@ on:
         required: false
         default: ""
         type: string
+      scanner_args:
+        description: "Extra scanner arguments (e.g. -Dproject.settings=sonar-x.properties)"
+        required: false
+        default: ""
+        type: string
+      external_issues_artifact:
+        description: "Artifact from an earlier job of the same run holding semgrep_sonar.json (e.g. semgrep-sonar from semgrep-reusable.yml); imported as external issues"
+        required: false
+        default: ""
+        type: string
     secrets:
       SONAR_TOKEN:
         description: "SonarQube analysis token"
@@ -67,6 +77,13 @@ jobs:
         if: inputs.test_command != ''
         run: ${{ inputs.test_command }}
 
+      - name: Download external issues
+        if: inputs.external_issues_artifact != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.external_issues_artifact }}
+          path: .external-issues
+
       - name: Setup Cloudflare Access proxy
         env:
           SONAR_URL: ${{ secrets.SONAR_HOST_URL }}
@@ -103,6 +120,10 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: http://localhost:9000
+        with:
+          args: >-
+            ${{ inputs.scanner_args }}
+            ${{ inputs.external_issues_artifact != '' && '-Dsonar.externalIssuesReportPaths=.external-issues/semgrep_sonar.json' || '' }}
 
       - name: Upload coverage report
         if: inputs.test_command != ''

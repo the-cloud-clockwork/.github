@@ -1,0 +1,98 @@
+name: Semgrep Rules (Reusable)
+
+# A project's own Semgrep rules: the rule fixtures first (`semgrep --test`, so a
+# rule that stops matching its broken case is red), then the scan with
+# `--error`. The findings ride two artifacts: `semgrep` (Semgrep JSON) and
+# `semgrep-sonar` (semgrep_sonar.json, SonarQube generic external issues),
+# which sonar-reusable.yml imports with `external_issues_artifact: semgrep-sonar`.
+
+on:
+  workflow_call:
+    inputs:
+      config:
+        description: "Rule file, from the caller's repo root (e.g. .semgrep/rules.yml)"
+        required: true
+        type: string
+      tests:
+        description: "Fixture file or directory for `semgrep --test` (empty = no fixture step)"
+        required: false
+        default: ""
+        type: string
+      scan_path:
+        description: "What the scan reads"
+        required: false
+        default: "."
+        type: string
+      semgrep_version:
+        description: "pip specifier for semgrep"
+        required: false
+        default: ">=1.178,<2"
+        type: string
+      runs_on:
+        description: "Runner label"
+        required: false
+        default: "anton-light"
+        type: string
+      tools_ref:
+        description: "Ref of The-Cloud-Clockwork/.github that supplies the Sonar converter"
+        required: false
+        default: "main"
+        type: string
+
+jobs:
+  semgrep:
+    name: Semgrep
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/checkout@v4
+        with:
+          repository: The-Cloud-Clockwork/.github
+          ref: ${{ inputs.tools_ref }}
+          path: .ci-shared
+          sparse-checkout: scripts
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install semgrep
+        env:
+          SEMGREP_VERSION: ${{ inputs.semgrep_version }}
+        run: |
+          python -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install --no-cache-dir "semgrep${SEMGREP_VERSION}"
+          echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"
+
+      - name: Rule fixtures (each rule goes red on its broken case)
+        if: inputs.tests != ''
+        env:
+          CONFIG: ${{ inputs.config }}
+          TESTS: ${{ inputs.tests }}
+        run: semgrep --test --metrics=off --disable-version-check --config "$CONFIG" "$TESTS"
+
+      - name: Scan
+        env:
+          CONFIG: ${{ inputs.config }}
+          SCAN_PATH: ${{ inputs.scan_path }}
+        run: >-
+          semgrep scan --config "$CONFIG" --error --metrics=off --disable-version-check
+          --exclude .ci-shared --json --output semgrep.json "$SCAN_PATH"
+
+      - name: SonarQube generic issues
+        if: always() && hashFiles('semgrep.json') != ''
+        run: python .ci-shared/scripts/semgrep_to_sonar.py semgrep.json semgrep_sonar.json
+
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('semgrep.json') != ''
+        with:
+          name: semgrep
+          path: semgrep.json
+
+      - uses: actions/upload-artifact@v4
+        if: always() && hashFiles('semgrep_sonar.json') != ''
+        with:
+          name: semgrep-sonar
+          path: semgrep_sonar.json

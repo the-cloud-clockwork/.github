@@ -18,6 +18,74 @@ The-Cloud-Clock-Work/.github/.github/workflows/<name>@main
 | `docker-publish-reusable.yml` | Build + push Docker image to DockerHub | `image_name` (required), `context` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` |
 | `pypi-publish-reusable.yml` | Build + publish to PyPI via OIDC | `python_version` | _(OIDC trusted publishers)_ |
 | `docs-audit-reusable.yml` | Claude-powered docs audit with MCP (self-contained prompt) | `scope`, `extra_instructions`, `anthropic_url_base` (required), + more | `ANTHROPIC_TOKEN_BASE`, `RELEASE_TOKEN`, `MCP_API_KEY` |
+| `sonar-reusable.yml` | SonarQube scan through the Cloudflare Access proxy, quality gate | `python_version`, `test_command`, `scanner_args`, `external_issues_artifact` | `SONAR_TOKEN`, `SONAR_HOST_URL`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` |
+| `locked-tests-reusable.yml` | Protected test list: a locked test deleted, skipped or weakened is red | `manifest`, `min_tests`, `runs_on` | _(none)_ |
+| `semgrep-reusable.yml` | A project's Semgrep rules: fixtures, scan, Sonar external-issues artifact | `config` (required), `tests`, `scan_path`, `runs_on` | _(none)_ |
+
+## Code examination: joining a project
+
+Three pieces, each a short caller workflow in the project. `scripts/` in this repo holds the
+checkers the reusables run (`check_locked_tests.py`, `semgrep_to_sonar.py`).
+
+**1. Locked tests.** Create the manifest and lock tests (static, runs no test):
+
+```bash
+gh api repos/The-Cloud-Clockwork/.github/contents/scripts/check_locked_tests.py \
+  -H 'Accept: application/vnd.github.raw' > "$HOME/check_locked_tests.py"
+echo '{"min_tests": 0, "tests": {}}' > tests/LOCKED_MANIFEST.json
+python3 "$HOME/check_locked_tests.py" --add tests/test_money.py tests/test_fills.py
+python3 "$HOME/check_locked_tests.py" --update     # after a deliberate change to a locked test
+```
+
+Set `min_tests` to the count locked, and own the manifest in `.github/CODEOWNERS`
+(`/tests/LOCKED_MANIFEST.json @owner`); code-owner review is enforced only when the branch's
+ruleset requires it. Caller:
+
+```yaml
+# .github/workflows/ci-locked-tests.yml
+on:
+  pull_request:
+    branches: [dev]
+jobs:
+  locked:
+    uses: The-Cloud-Clockwork/.github/.github/workflows/locked-tests-reusable.yml@main
+```
+
+A PR goes red when a locked test is deleted, gains a skip or xfail (decorator, module
+`pytestmark`, `pytest.skip()` in the body), loses an assert, or changes any literal
+(expected values, parametrize rows, inputs) without the manifest changing with it.
+
+**2. Semgrep rules → SonarQube.** Rules in `.semgrep/rules.yml`, one fixture file per rule
+file with `# ruleid:` / `# ok:` lines (`semgrep --test` fails when a rule stops matching its
+broken case). Caller, with the import into the project's Sonar gate:
+
+```yaml
+# .github/workflows/ci-semgrep.yml
+on:
+  pull_request:
+    branches: [dev]
+jobs:
+  semgrep:
+    uses: The-Cloud-Clockwork/.github/.github/workflows/semgrep-reusable.yml@main
+    with:
+      config: .semgrep/rules.yml
+      tests: .semgrep/tests/rules.py
+  sonar:
+    needs: semgrep
+    if: always()
+    uses: The-Cloud-Clockwork/.github/.github/workflows/sonar-reusable.yml@main
+    with:
+      external_issues_artifact: semgrep-sonar
+      scanner_args: -Dproject.settings=sonar-project.properties
+    secrets: inherit
+```
+
+Semgrep skips rule files under a dot-directory when given the directory, so `tests` names the
+fixture file (or a non-dot directory). The findings land in Sonar as external issues
+(engine `semgrep`, RELIABILITY / HIGH), so they count against the quality gate.
+
+**3. Property tests** need no shared workflow: add `hypothesis` to the project's dev
+dependencies and write `@given` tests next to the unit tests; they run wherever the suite runs.
 
 ## Workflow Templates
 

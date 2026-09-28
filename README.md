@@ -19,73 +19,72 @@ The-Cloud-Clock-Work/.github/.github/workflows/<name>@main
 | `pypi-publish-reusable.yml` | Build + publish to PyPI via OIDC | `python_version` | _(OIDC trusted publishers)_ |
 | `docs-audit-reusable.yml` | Claude-powered docs audit with MCP (self-contained prompt) | `scope`, `extra_instructions`, `anthropic_url_base` (required), + more | `ANTHROPIC_TOKEN_BASE`, `RELEASE_TOKEN`, `MCP_API_KEY` |
 | `sonar-reusable.yml` | SonarQube scan through the Cloudflare Access proxy, quality gate | `python_version`, `test_command`, `scanner_args`, `external_issues_artifact` | `SONAR_TOKEN`, `SONAR_HOST_URL`, `CF_ACCESS_CLIENT_ID`, `CF_ACCESS_CLIENT_SECRET` |
-| `locked-tests-reusable.yml` | Protected test list: a locked test deleted, skipped or weakened is red | `manifest`, `min_tests`, `runs_on` | _(none)_ |
+| `code-exam-reusable.yml` | Locked tests, Semgrep rules, rule catalog, coverage ratchet, mutation ledger | `config`, `package_dir`, `mutation_modules`, per-check booleans | _(none)_ |
 | `semgrep-reusable.yml` | A project's Semgrep rules: fixtures, scan, Sonar external-issues artifact | `config` (required), `tests`, `scan_path`, `runs_on` | _(none)_ |
 
 ## Code examination: joining a project
 
-Three pieces, each a short caller workflow in the project. `scripts/` in this repo holds the
-checkers the reusables run (`check_locked_tests.py`, `semgrep_to_sonar.py`).
+`code-exam-reusable.yml` runs five checks on every PR. The graders are `scripts/` in this repo
+at `tools_ref`; the project's settings, rules and baselines are read from the PR merge's parent
+(the base branch, `HEAD^1`), never from the PR. Each check is proven red by a mutant PR in the
+first project that adopted it (tcc-qitp #1910–#1915).
 
-**1. Locked tests.** Create the manifest and lock tests (static, runs no test):
+| Check | Red when | Project files |
+|---|---|---|
+| `locked-tests` | a locked test is deleted, skipped/xfailed, loses an assert, changes a literal, or a helper, fixture or constant it reaches changes; a manifest entry is dropped or altered; a gate file is edited; a conftest adds a collection hook or skip | `tests/LOCKED_MANIFEST.json` |
+| `semgrep-rules` | a rule file stops matching its `# ruleid:` fixture, or the scan finds a blocking issue (`# nosemgrep` and `.semgrepignore` are ignored) | `.semgrep/<name>.yml` + `.semgrep/tests/<name>.py` |
+| `rule-catalog` | a rule, row or function of the listed modules has no entry; an entry loses a locked test or mutant; the `pending` backlog grows | `tests/RULE_CATALOG.yaml` |
+| `coverage-ratchet` | a module's line or branch coverage falls under the baseline, a baseline value differs from the run's measurement, or a coverage hook appears | `tests/COVERAGE_BASELINE.json` |
+| `mutation-ledger` | a mutant of a changed function survives without an `equivalent` ledger entry backed by an adversarial-second-reader verdict (line 1 `reader: adversarial-second-reader (launched by X)`, line 2 `claims-by: Y`, a CONFIRMED line for that exact mutant, the file's sha256 in the entry) | `tests/MUTATION_LEDGER.json`, `tests/mutation_verdicts/` |
 
-```bash
-gh api repos/The-Cloud-Clockwork/.github/contents/scripts/check_locked_tests.py \
-  -H 'Accept: application/vnd.github.raw' > "$HOME/check_locked_tests.py"
-echo '{"min_tests": 0, "tests": {}}' > tests/LOCKED_MANIFEST.json
-python3 "$HOME/check_locked_tests.py" --add tests/test_money.py tests/test_fills.py
-python3 "$HOME/check_locked_tests.py" --update     # after a deliberate change to a locked test
+**Settings** go in `.github/code-exam.json`, one section per check, keys are the upper-case
+settings at the top of each script (an unknown key fails the run):
+
+```json
+{
+  "locked_tests": {"FROZEN_GLOBS": [".github/workflows/code-exam.yml", ".semgrep/**/*"], "MIN_LOCKED": 50},
+  "rule_catalog": {"TRUST": "docs/rules.md", "SRC": "src/mypkg", "MODULES": ["pricing", "fees"], "MIN_RULES": 10, "MIN_FUNCTIONS": 20},
+  "coverage_ratchet": {"PACKAGE": "src/mypkg", "MODULES": ["pricing", "fees"]},
+  "mutation_ledger": {"PACKAGE": "mypkg", "SRC": "src/mypkg"}
+}
 ```
 
-Set `min_tests` to the count locked, and own the manifest in `.github/CODEOWNERS`
-(`/tests/LOCKED_MANIFEST.json @owner`); code-owner review is enforced only when the branch's
-ruleset requires it. Caller:
+**Caller** (`.github/workflows/code-exam.yml`, plain `pull_request`):
 
 ```yaml
-# .github/workflows/ci-locked-tests.yml
 on:
   pull_request:
     branches: [dev]
 jobs:
-  locked:
-    uses: The-Cloud-Clockwork/.github/.github/workflows/locked-tests-reusable.yml@main
+  exam:
+    uses: The-Cloud-Clockwork/.github/.github/workflows/code-exam-reusable.yml@main
+    with:
+      package_dir: src
+      dist_name: mypkg
+      import_name: mypkg
+      mutation_modules: "pricing fees"
+      rule_catalog: true
+      coverage_ratchet: true
+      mutation_ledger: true
 ```
 
-A PR goes red when a locked test is deleted, gains a skip or xfail (decorator, module
-`pytestmark`, `pytest.skip()` in the body), loses an assert, or changes any literal
-(expected values, parametrize rows, inputs) without the manifest changing with it.
+**Seeding.** Lock tests with `python3 check_locked_tests.py --add tests/test_x.py` (fetch the
+script with `gh api repos/The-Cloud-Clockwork/.github/contents/scripts/check_locked_tests.py -H
+'Accept: application/vnd.github.raw'`); seed the catalog with `gate_rule_catalog.py --seed`; the
+coverage baseline's first values come alone in a PR that changes only the baseline, equal to that
+run's measurement; the ledger starts empty.
 
-**2. Semgrep rules → SonarQube.** Rules in `.semgrep/rules.yml`, one fixture file per rule
-file with `# ruleid:` / `# ok:` lines (`semgrep --test` fails when a rule stops matching its
-broken case). Caller, with the import into the project's Sonar gate:
+**Making it binding.** A PR can edit its own caller workflow, so a required check by name is only
+as strong as the caller. Make it binding with an organization ruleset that *requires the
+workflow* (pinned to this repo's ref), or keep the caller on the default branch and use
+`pull_request_target` there: GitHub runs `pull_request_target` workflows only from the
+repository's default branch (since 2025-12-08), so a gate on a non-default integration branch
+never starts.
 
-```yaml
-# .github/workflows/ci-semgrep.yml
-on:
-  pull_request:
-    branches: [dev]
-jobs:
-  semgrep:
-    uses: The-Cloud-Clockwork/.github/.github/workflows/semgrep-reusable.yml@main
-    with:
-      config: .semgrep/rules.yml
-      tests: .semgrep/tests/rules.py
-  sonar:
-    needs: semgrep
-    if: always()
-    uses: The-Cloud-Clockwork/.github/.github/workflows/sonar-reusable.yml@main
-    with:
-      external_issues_artifact: semgrep-sonar
-      scanner_args: -Dproject.settings=sonar-project.properties
-    secrets: inherit
-```
+**Semgrep → SonarQube.** `semgrep-reusable.yml` produces the `semgrep-sonar` artifact;
+`sonar-reusable.yml` imports it with `external_issues_artifact: semgrep-sonar`.
 
-Semgrep skips rule files under a dot-directory when given the directory, so `tests` names the
-fixture file (or a non-dot directory). The findings land in Sonar as external issues
-(engine `semgrep`, RELIABILITY / HIGH), so they count against the quality gate.
-
-**3. Property tests** need no shared workflow: add `hypothesis` to the project's dev
-dependencies and write `@given` tests next to the unit tests; they run wherever the suite runs.
+**Property tests** need no shared workflow: add `hypothesis` to the project's dev dependencies.
 
 ## Workflow Templates
 

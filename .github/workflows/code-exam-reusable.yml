@@ -1,0 +1,290 @@
+name: Code Examination (Reusable)
+
+# The five code-examination checks for a project, called from a plain
+# pull_request workflow. The graders come from this repo at `tools_ref`; the
+# project's config, rules and baselines come from the merge's parent (the base
+# branch, HEAD^1), never from the PR. The PR's code runs only in the coverage
+# and mutation jobs, with a read-only token and no secrets.
+# Settings: .github/code-exam.json in the project (see README).
+
+on:
+  workflow_call:
+    inputs:
+      config: { type: string, default: ".github/code-exam.json" }
+      tools_ref: { type: string, default: "main" }
+      runs_on: { type: string, default: "anton-light" }
+      runs_on_batch: { type: string, default: "anton-batch" }
+      package_dir: { type: string, default: "simulation", description: "installable package dir (pip -e <dir>[dev])" }
+      dist_name: { type: string, default: "qitp-simulation", description: "distribution uninstalled so tests import the merge's source" }
+      import_name: { type: string, default: "qitp_simulation" }
+      extra_deps: { type: string, default: "" }
+      mutation_modules: { type: string, default: "" }
+      locked_tests: { type: boolean, default: true }
+      semgrep_rules: { type: boolean, default: true }
+      rule_catalog: { type: boolean, default: false }
+      coverage_ratchet: { type: boolean, default: false }
+      mutation_ledger: { type: boolean, default: false }
+
+permissions:
+  contents: read
+
+env:
+  CONFIG: ${{ inputs.config }}
+  PACKAGE_DIR: ${{ inputs.package_dir }}
+  DIST_NAME: ${{ inputs.dist_name }}
+  IMPORT_NAME: ${{ inputs.import_name }}
+  EXTRA_DEPS: ${{ inputs.extra_deps }}
+  MODULES: ${{ inputs.mutation_modules }}
+
+jobs:
+  locked-tests:
+    name: locked-tests
+    if: inputs.locked_tests
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: The org's graders
+        uses: actions/checkout@v4
+        with:
+          repository: The-Cloud-Clockwork/.github
+          ref: ${{ inputs.tools_ref }}
+          path: .code-exam-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - run: mv .code-exam-tools "$RUNNER_TEMP/tools"
+
+      - name: The base, from the merge's parent
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/parent" HEAD^1
+          cp "$RUNNER_TEMP/tools/scripts/check_locked_tests.py" "$RUNNER_TEMP/"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - run: python "$RUNNER_TEMP/check_locked_tests.py" --config "$RUNNER_TEMP/parent/$CONFIG" --base-root "$RUNNER_TEMP/parent" --head-root .
+
+  semgrep-rules:
+    name: semgrep-rules
+    if: inputs.semgrep_rules
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: The org's graders
+        uses: actions/checkout@v4
+        with:
+          repository: The-Cloud-Clockwork/.github
+          ref: ${{ inputs.tools_ref }}
+          path: .code-exam-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - run: mv .code-exam-tools "$RUNNER_TEMP/tools"
+
+      - name: The base's rules and fixtures, from the merge's parent
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/parent" HEAD^1
+          mkdir -p "$RUNNER_TEMP/rules"
+          cp -r "$RUNNER_TEMP/parent/.semgrep/." "$RUNNER_TEMP/rules/"
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install semgrep
+        run: |
+          python -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install --no-cache-dir "semgrep>=1.178,<2"
+          echo "$RUNNER_TEMP/semgrep/bin" >> "$GITHUB_PATH"
+
+      - name: Rule fixtures
+        working-directory: ${{ runner.temp }}/rules
+        run: |
+          for rules in *.yml; do
+            semgrep --test --metrics=off --disable-version-check --config "$rules" "tests/$(basename "$rules" .yml).py"
+          done
+
+      - name: The base's rules hold on the merge result
+        run: |
+          find . -name .semgrepignore -delete
+          configs=()
+          for rules in "$RUNNER_TEMP"/rules/*.yml; do configs+=(--config "$rules"); done
+          semgrep scan "${configs[@]}" --error --disable-nosem --no-git-ignore --metrics=off --disable-version-check .
+
+  rule-catalog:
+    name: rule-catalog
+    if: inputs.rule_catalog
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: The org's graders
+        uses: actions/checkout@v4
+        with:
+          repository: The-Cloud-Clockwork/.github
+          ref: ${{ inputs.tools_ref }}
+          path: .code-exam-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - run: mv .code-exam-tools "$RUNNER_TEMP/tools"
+
+      - name: The base, from the merge's parent
+        id: grader
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/parent" HEAD^1
+          if [ -f "$RUNNER_TEMP/parent/$CONFIG" ] && cp "$RUNNER_TEMP/tools/scripts/gate_rule_catalog.py" "$RUNNER_TEMP/"; then
+            echo "present=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "No rule catalog on dev yet."
+          fi
+
+      - uses: actions/setup-python@v6
+        if: steps.grader.outputs.present == '1'
+        with:
+          python-version: "3.12"
+
+      - if: steps.grader.outputs.present == '1'
+        run: |
+          pip install --no-cache-dir pyyaml==6.0.3
+          python "$RUNNER_TEMP/gate_rule_catalog.py" --config "$RUNNER_TEMP/parent/$CONFIG" --base-root "$RUNNER_TEMP/parent" --head-root .
+
+  coverage-ratchet:
+    name: coverage-ratchet
+    if: inputs.coverage_ratchet
+    runs-on: ${{ inputs.runs_on_batch }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: The org's graders
+        uses: actions/checkout@v4
+        with:
+          repository: The-Cloud-Clockwork/.github
+          ref: ${{ inputs.tools_ref }}
+          path: .code-exam-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - run: mv .code-exam-tools "$RUNNER_TEMP/tools"
+
+      - name: Scope and dev's grader
+        id: scope
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/parent" HEAD^1
+          git diff --name-only HEAD^1 HEAD > "$RUNNER_TEMP/changed"
+          if cp "$RUNNER_TEMP/tools/scripts/gate_coverage_ratchet.py" "$RUNNER_TEMP/" \
+             && grep -qE "^(${PACKAGE_DIR}/|tests/COVERAGE_BASELINE\\.json$)" "$RUNNER_TEMP/changed"; then
+            echo "run=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing under the package changed."
+          fi
+
+      - uses: actions/setup-python@v6
+        if: steps.scope.outputs.run == '1'
+        with:
+          python-version: "3.12"
+
+      - name: The base's dependencies, not the PR's
+        if: steps.scope.outputs.run == '1'
+        run: |
+          pip install --no-cache-dir -e "$RUNNER_TEMP/parent/$PACKAGE_DIR[dev]" "coverage[toml]>=7.6,<8"
+          pip uninstall -y "$DIST_NAME"
+
+      - name: Measure the merge result
+        if: steps.scope.outputs.run == '1'
+        working-directory: ${{ inputs.package_dir }}
+        run: |
+          python -m coverage run --branch --rcfile=/dev/null --data-file="$RUNNER_TEMP/.coverage" \
+            --source="$IMPORT_NAME" -m pytest tests -q -p no:cacheprovider || echo "::warning::tests failed; coverage still read"
+          python -m coverage json --data-file="$RUNNER_TEMP/.coverage" -o "$RUNNER_TEMP/coverage.json"
+
+      - if: steps.scope.outputs.run == '1'
+        run: |
+          python "$RUNNER_TEMP/gate_coverage_ratchet.py" --config "$RUNNER_TEMP/parent/$CONFIG" --coverage "$RUNNER_TEMP/coverage.json" \
+            --changed "$RUNNER_TEMP/changed" --base-root "$RUNNER_TEMP/parent" --head-root .
+
+  mutation-ledger:
+    name: mutation-ledger
+    if: inputs.mutation_ledger
+    runs-on: ${{ inputs.runs_on_batch }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - name: The org's graders
+        uses: actions/checkout@v4
+        with:
+          repository: The-Cloud-Clockwork/.github
+          ref: ${{ inputs.tools_ref }}
+          path: .code-exam-tools
+          sparse-checkout: scripts
+          persist-credentials: false
+
+      - run: mv .code-exam-tools "$RUNNER_TEMP/tools"
+
+      - name: Plan
+        id: plan
+        run: |
+          git worktree add --detach "$RUNNER_TEMP/parent" HEAD^1
+          cp "$RUNNER_TEMP/tools/scripts/gate_mutation_ledger.py" "$RUNNER_TEMP/"
+          : > "$RUNNER_TEMP/plan"
+          for m in $MODULES; do
+            names=$(python3 "$RUNNER_TEMP/gate_mutation_ledger.py" --config "$RUNNER_TEMP/parent/$CONFIG" --changed-functions "$RUNNER_TEMP/parent" . "$m" | tr '\n' ' ')
+            [ -n "${names// }" ] && echo "$m|$names" >> "$RUNNER_TEMP/plan"
+          done
+          cat "$RUNNER_TEMP/plan"
+          echo "present=1" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-python@v6
+        if: steps.plan.outputs.present == '1'
+        with:
+          python-version: "3.12"
+
+      - name: The base's dependencies, not the PR's
+        if: steps.plan.outputs.present == '1' && hashFiles(format('{0}/plan', runner.temp)) != ''
+        run: |
+          pip install --no-cache-dir -e "$RUNNER_TEMP/parent/$PACKAGE_DIR[dev]" "mutmut>=3.3,<4" $EXTRA_DEPS
+          pip uninstall -y "$DIST_NAME"
+
+      - name: Mutate the changed functions
+        if: steps.plan.outputs.present == '1'
+        working-directory: ${{ inputs.package_dir }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/results"
+          [ -s "$RUNNER_TEMP/plan" ] || { echo "No G1 function changed."; exit 0; }
+          for d in ../*; do n="$(basename "$d")"; [ -e "$n" ] || ln -sfn "../$n" "$n"; done
+          ln -sfn . simulation
+          export PYTHONPATH="$GITHUB_WORKSPACE"
+          while IFS='|' read -r m names; do
+            printf '[mutmut]\nsource_paths=src/$IMPORT_NAME/%s.py\npytest_add_cli_args_test_selection=tests/\nalso_copy=\n    src/\n    tests/\n    pyproject.toml\n' "$m" > setup.cfg
+            rm -rf mutants
+            # shellcheck disable=SC2086
+            python -m mutmut run --max-children 2 $names || true
+            python -m mutmut results > "$RUNNER_TEMP/results/g1_mutants_$m.txt" || true
+          done < "$RUNNER_TEMP/plan"
+
+      - name: Every survivor is in the ledger
+        if: steps.plan.outputs.present == '1'
+        run: python "$RUNNER_TEMP/gate_mutation_ledger.py" --config "$RUNNER_TEMP/parent/$CONFIG" --results "$RUNNER_TEMP/results" --base-root "$RUNNER_TEMP/parent" --head-root .

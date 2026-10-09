@@ -17,6 +17,7 @@ The-Cloud-Clock-Work/.github/.github/workflows/<name>@main
 | `ghcr-build-reusable.yml` | Build + push Docker image to GHCR | `dockerfile`, `context` | _(uses `GITHUB_TOKEN`)_ |
 | `docker-publish-reusable.yml` | Build + push Docker image to DockerHub | `image_name` (required), `context` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` |
 | `pypi-publish-reusable.yml` | Build + publish to PyPI via OIDC | `python_version` | _(OIDC trusted publishers)_ |
+| `semgrep-reusable.yml` | Fail on Semgrep findings new against a base revision (strict, baseline-graded) | `base` (required), `configs`, `exclude_rules`, `timeout`, `semgrep_version`, `runs_on` | _(none)_ |
 | `docs-audit-reusable.yml` | Claude-powered docs audit with MCP (self-contained prompt) | `scope`, `extra_instructions`, `anthropic_url_base` (required), + more | `ANTHROPIC_TOKEN_BASE`, `TCC_CI_CLIENT_ID`, `TCC_CI_APP_PRIVATE_KEY`, `MCP_API_KEY` |
 | `python-tests-reusable.yml` | Staged Python tests: changed tests on pull request, one sharded version in the merge queue, the other versions and slow checks after merge | `pr_python`, `queue_python`, `push_python`, `shards`, `pr_runner`, `queue_runner`, `push_runner`, `slow_command` | _(none)_ |
 

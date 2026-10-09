@@ -1,0 +1,68 @@
+name: Semgrep (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      base:
+        description: "Revision whose findings are already known; only findings new against it fail"
+        required: true
+        type: string
+      configs:
+        description: "Space-separated Semgrep configs, such as registry packs or rule files"
+        required: false
+        default: "p/ci p/secrets"
+        type: string
+      exclude_rules:
+        description: "Space-separated rule ids to skip"
+        required: false
+        default: ""
+        type: string
+      timeout:
+        description: "Per-rule timeout in seconds; a rule that times out drops its findings"
+        required: false
+        default: 30
+        type: number
+      semgrep_version:
+        description: "Semgrep release installed with pip"
+        required: false
+        default: "1.177.0"
+        type: string
+      runs_on:
+        description: "Runner label"
+        required: false
+        default: "ubuntu-latest"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Semgrep
+        env:
+          SEMGREP_VERSION: ${{ inputs.semgrep_version }}
+        run: python -m pip install "semgrep==$SEMGREP_VERSION"
+
+      - name: Fail on findings new against the base
+        env:
+          BASE: ${{ inputs.base }}
+          CONFIGS: ${{ inputs.configs }}
+          EXCLUDE_RULES: ${{ inputs.exclude_rules }}
+          TIMEOUT: ${{ inputs.timeout }}
+        run: |
+          args=()
+          for config in $CONFIGS; do args+=(--config "$config"); done
+          for rule in $EXCLUDE_RULES; do args+=(--exclude-rule "$rule"); done
+          semgrep scan --error --strict --verbose --timeout "$TIMEOUT" --metrics off "${args[@]}" --baseline-commit "$BASE"

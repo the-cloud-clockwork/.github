@@ -92,7 +92,7 @@ jobs:
 
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
           TAG="v${{ steps.version.outputs.next }}"
           BUMP="${{ inputs.bump }}"
@@ -112,7 +112,7 @@ jobs:
       - name: Dispatch downstream workflows
         if: inputs.downstream_workflows != ''
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
           TAG="v${{ steps.version.outputs.next }}"
           IFS=',' read -ra WORKFLOWS <<< "${{ inputs.downstream_workflows }}"

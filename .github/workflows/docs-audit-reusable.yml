@@ -49,7 +49,13 @@ on:
         type: string
     secrets:
       RELEASE_TOKEN:
-        description: "PAT for pushing branches and creating PRs"
+        description: "Deprecated and ignored; the org CI GitHub App token is used instead"
+        required: false
+      TCC_CI_CLIENT_ID:
+        description: "Org CI GitHub App client ID (falls back to GITHUB_TOKEN)"
+        required: false
+      TCC_CI_APP_PRIVATE_KEY:
+        description: "Org CI GitHub App private key"
         required: false
       ANTHROPIC_TOKEN_BASE:
         description: "API key for the base Anthropic endpoint"
@@ -75,13 +81,23 @@ jobs:
   docs-audit:
     runs-on: anton
     timeout-minutes: ${{ inputs.timeout_minutes }}
+    env:
+      HAS_CI_APP: ${{ secrets.TCC_CI_CLIENT_ID != '' && secrets.TCC_CI_APP_PRIVATE_KEY != '' }}
 
     steps:
+      - name: Mint org CI App token
+        id: app-token
+        if: env.HAS_CI_APP == 'true'
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ secrets.TCC_CI_CLIENT_ID }}
+          private-key: ${{ secrets.TCC_CI_APP_PRIVATE_KEY }}
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Configure git
         run: |
@@ -303,7 +319,7 @@ jobs:
           ANTHROPIC_BASE_URL: ${{ steps.anthropic.outputs.url }}
           ANTHROPIC_CUSTOM_HEADERS: ${{ steps.headers.outputs.value }}
           CLAUDE_MODEL: ${{ steps.anthropic.outputs.model }}
-          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
         run: |
           echo "Endpoint: ${ANTHROPIC_BASE_URL}"
           echo "Model:    ${CLAUDE_MODEL}"

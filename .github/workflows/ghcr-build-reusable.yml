@@ -45,8 +45,8 @@ on:
     secrets:
       ghcr_token:
         description: |
-          Optional override for GHCR auth. Pass an org-scoped PAT (e.g. ORG_GITHUB_TOKEN)
-          when cross-repo image pushes are needed. Falls back to github.token otherwise.
+          Deprecated and ignored. GHCR auth uses the workflow token; grant the calling
+          repository write access on the package for cross-repository pushes.
         required: false
 
 permissions:
@@ -93,7 +93,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.ghcr_token || github.token }}
+          password: ${{ github.token }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

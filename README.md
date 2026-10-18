@@ -13,11 +13,11 @@ The-Cloud-Clock-Work/.github/.github/workflows/<name>@main
 | Workflow | Purpose | Key Inputs | Secrets |
 |----------|---------|------------|---------|
 | `claude-reusable.yml` | Claude Code Action (issue/PR assistant) | `model`, `trigger_phrase`, `allowed_tools`, `timeout_minutes` | `ANTHROPIC_AUTH_TOKEN` (required), `ANTHROPIC_BASE_URL` (required) |
-| `release-reusable.yml` | Semver bump → commit → tag → push | `bump` (required), `branch`, `version_file` | `RELEASE_TOKEN` (optional) |
+| `release-reusable.yml` | Semver bump → commit → tag → push | `bump` (required), `branch`, `version_file` | `TCC_CI_CLIENT_ID`, `TCC_CI_APP_PRIVATE_KEY` (optional, org CI App; falls back to `GITHUB_TOKEN`) |
 | `ghcr-build-reusable.yml` | Build + push Docker image to GHCR | `dockerfile`, `context` | _(uses `GITHUB_TOKEN`)_ |
 | `docker-publish-reusable.yml` | Build + push Docker image to DockerHub | `image_name` (required), `context` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` |
 | `pypi-publish-reusable.yml` | Build + publish to PyPI via OIDC | `python_version` | _(OIDC trusted publishers)_ |
-| `docs-audit-reusable.yml` | Claude-powered docs audit with MCP (self-contained prompt) | `scope`, `extra_instructions`, `anthropic_url_base` (required), + more | `ANTHROPIC_TOKEN_BASE`, `RELEASE_TOKEN`, `MCP_API_KEY` |
+| `docs-audit-reusable.yml` | Claude-powered docs audit with MCP (self-contained prompt) | `scope`, `extra_instructions`, `anthropic_url_base` (required), + more | `ANTHROPIC_TOKEN_BASE`, `TCC_CI_CLIENT_ID`, `TCC_CI_APP_PRIVATE_KEY`, `MCP_API_KEY` |
 
 ## Workflow Templates
 
@@ -50,10 +50,10 @@ jobs:
     with:
       bump: ${{ inputs.bump }}
     secrets:
-      # Org standardized on ORG_GITHUB_TOKEN. There is NO org secret named
-      # RELEASE_TOKEN — referencing it resolves to empty and silently falls
-      # back to GITHUB_TOKEN.
-      RELEASE_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+      # The org CI GitHub App mints the push token; without it the
+      # workflow falls back to GITHUB_TOKEN.
+      TCC_CI_CLIENT_ID: ${{ secrets.TCC_CI_CLIENT_ID }}
+      TCC_CI_APP_PRIVATE_KEY: ${{ secrets.TCC_CI_APP_PRIVATE_KEY }}
 ```
 
 ### GHCR Build
@@ -165,7 +165,8 @@ jobs:
       anthropic_model_fallback: ${{ vars.ANTHROPIC_MODEL_FALLBACK }}
       mcp_server_url: ${{ vars.MCP_SERVER_URL }}
     secrets:
-      RELEASE_TOKEN: ${{ secrets.ORG_GITHUB_TOKEN }}
+      TCC_CI_CLIENT_ID: ${{ secrets.TCC_CI_CLIENT_ID }}
+      TCC_CI_APP_PRIVATE_KEY: ${{ secrets.TCC_CI_APP_PRIVATE_KEY }}
       ANTHROPIC_TOKEN_BASE: ${{ secrets.ANTHROPIC_TOKEN_BASE }}
       ANTHROPIC_TOKEN_FALLBACK: ${{ secrets.ANTHROPIC_TOKEN_FALLBACK }}
       MCP_API_KEY: ${{ secrets.MCP_API_KEY }}

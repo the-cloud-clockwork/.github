@@ -1,0 +1,78 @@
+name: Promote
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Lint every workflow
+        run: |
+          bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+          ./actionlint -color
+
+  promote:
+    needs: [actionlint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      checks: read
+      statuses: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Mint the promotion App token
+        id: app-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ secrets.TCC_CI_CLIENT_ID }}
+          private-key: ${{ secrets.TCC_CI_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-metadata: read
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Squash the graded snapshot into main and verify its tree
+        uses: actions/github-script@v7
+        env:
+          GRADE_TOKEN: ${{ github.token }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const promote = require('./.github/scripts/promote.cjs');
+            const grader = new github.constructor({ auth: process.env.GRADE_TOKEN });
+            await promote({ github, grader, context, core });
+
+      - name: Close abandoned promotion pull requests
+        if: "!cancelled() && steps.app-token.outcome == 'success'"
+        uses: actions/github-script@v7
+        env:
+          PROMOTION_APP: ${{ steps.app-token.outputs.app-slug }}
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const { closeAbandoned } = require('./.github/scripts/promote.cjs');
+            await closeAbandoned({ github, context, core, app: process.env.PROMOTION_APP, deadline: Date.now() + 180000 });

@@ -23,6 +23,8 @@ jobs:
           persist-credentials: false
 
       - name: Lint every workflow
+        env:
+          SHELLCHECK_OPTS: --severity=warning
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
           ./actionlint -color

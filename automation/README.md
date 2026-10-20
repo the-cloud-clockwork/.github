@@ -52,7 +52,16 @@ What we saw ourselves: at 14:47 UTC on 20 October, three agentihooks merge group
 
 ### A quick check before merge, the full check after
 
-Google runs a fast part of its tests before a change goes in and the full set after, and undoes a change that breaks the full set ([Software Engineering at Google, chapter 23](https://abseil.io/resources/swe-book/html/ch23.html)). The shared test workflow is built the same way: a pull request runs only the tests its change touches, the merge queue runs the unit tests on one Python version, and the other Python versions and the slow checks run after the merge on `dev`. A failure there holds the release and gets fixed by the next pull request.
+Google runs a fast part of its tests before a change goes in and the full set after, and undoes a change that breaks the full set ([Software Engineering at Google, chapter 23](https://abseil.io/resources/swe-book/html/ch23.html)). The shared test workflow is built the same way: a pull request runs only the tests its change touches, the merge queue runs the unit tests on one Python version, and the other Python versions and the slow checks run after the merge on `dev`. A failure there is fixed by the next pull request, and it must not hold the release of changes that did not cause it (next section).
+
+### A red check holds only its own change
+
+A failing check stops only the change that broke it. Every change that passed its own checks keeps merging, releasing and deploying. One red check that freezes unrelated green work blocks the whole team and invites merging around the gate.
+
+- **Merge queue: this holds today.** With "Only merge non-failing pull requests" on, GitHub removes the failing pull request from the queue and retests the rest without it ([GitHub, managing a merge queue](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)). GitLab merge trains drop the failing request and rebuild the ones behind it ([GitLab, merge trains](https://docs.gitlab.com/ci/pipelines/merge_trains/)).
+- **After the merge: this does not hold yet.** One red slow check keeps `main` on the last green head, so every green change merged after it waits too. The fix copies Google and Chromium: find the change that broke the check between the last green head and the current one, revert or quarantine only that change, and release the rest ([Software Engineering at Google, chapter 23](https://abseil.io/resources/swe-book/html/ch23.html); [Chromium, sheriff philosophy](https://www.chromium.org/developers/tree-sheriffs/sheriff-philosophy/)).
+- **Flaky or unrelated checks report without blocking**, and each one files a task naming its owner, the way Mergify and Trunk quarantine flaky tests ([Mergify, flaky test quarantine](https://mergify.com/guides/detect-and-quarantine-flaky-tests)). A quarantine with no owner task is a hole in the gate.
+- **Independent changes do not wait on each other.** Uber's queue lands changes that touch separate code side by side instead of in one strict line ([Uber, arXiv 2501.03440](https://arxiv.org/abs/2501.03440)).
 
 ### Keep pull request checks from waiting
 

@@ -145,7 +145,11 @@ jobs:
           done
           selected=()
           for path in "${changed[@]}"; do
-            [[ -f "$path" ]] || continue
+            if [[ ! -f "$path" ]]; then
+              echo "$path was deleted; the full suite runs."
+              echo "selection=all" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             if [[ "$path" != *.py ]]; then
               for root in "${roots[@]}"; do
                 if [[ "$path" == "$root/"* ]]; then

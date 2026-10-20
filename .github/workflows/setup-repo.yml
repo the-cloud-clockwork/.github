@@ -1,0 +1,51 @@
+name: Setup repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: Repository name in the organization
+        required: true
+        type: string
+      dry_run:
+        description: Print the settings and files without writing
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: setup-${{ inputs.repo }}
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Mint the org App token for the target repository
+        id: app-token
+        uses: actions/create-github-app-token@v3.2.0
+        with:
+          client-id: ${{ secrets.TCC_CI_CLIENT_ID }}
+          private-key: ${{ secrets.TCC_CI_APP_PRIVATE_KEY }}
+          repositories: ${{ inputs.repo }}
+          permission-metadata: read
+          permission-administration: ${{ inputs.dry_run && 'read' || 'write' }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Apply the CI standard
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPO: ${{ inputs.repo }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=(--repo "$REPO")
+          if [[ "$DRY_RUN" == "true" ]]; then args+=(--dry-run); fi
+          python3 automation/setup_repo.py "${args[@]}"

@@ -18,6 +18,7 @@ The-Cloud-Clock-Work/.github/.github/workflows/<name>@main
 | `docker-publish-reusable.yml` | Build + push Docker image to DockerHub | `image_name` (required), `context` | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` |
 | `pypi-publish-reusable.yml` | Build + publish to PyPI via OIDC | `python_version` | _(OIDC trusted publishers)_ |
 | `docs-audit-reusable.yml` | Claude-powered docs audit with MCP (self-contained prompt) | `scope`, `extra_instructions`, `anthropic_url_base` (required), + more | `ANTHROPIC_TOKEN_BASE`, `TCC_CI_CLIENT_ID`, `TCC_CI_APP_PRIVATE_KEY`, `MCP_API_KEY` |
+| `python-tests-reusable.yml` | Staged Python tests: changed tests on pull request, one sharded version in the merge queue, the other versions and slow checks after merge | `pr_python`, `queue_python`, `push_python`, `shards`, `pr_runner`, `queue_runner`, `push_runner`, `slow_command` | _(none)_ |
 
 ## Automation
 
@@ -175,3 +176,50 @@ jobs:
       ANTHROPIC_TOKEN_FALLBACK: ${{ secrets.ANTHROPIC_TOKEN_FALLBACK }}
       MCP_API_KEY: ${{ secrets.MCP_API_KEY }}
 ```
+
+### Python Tests
+
+Three stages, chosen by the event that called the workflow:
+
+| Event | Runs | Purpose |
+|-------|------|---------|
+| `pull_request` | Only the test files the change touches, on `pr_python` | Fast feedback before the queue |
+| `merge_group` | The full suite on `queue_python` (default 3.12), split into `shards` jobs | The one check that gates the merge |
+| `push` to `push_branch` | The full suite on `push_python` (default 3.11) plus `slow_command` | Coverage of other versions and slow checks after merge, gating promotion only |
+
+A changed file under `full_suite_paths` (dependency files, conftest, workflows) runs the whole suite on a pull request. Make the ruleset require the aggregator check, `<caller job> / Python Tests — Required`, never the per shard checks.
+
+```yaml
+# .github/workflows/tests.yml
+name: Tests
+on:
+  pull_request:
+    branches: [dev]
+  merge_group:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: The-Cloud-Clock-Work/.github/.github/workflows/python-tests-reusable.yml@main
+    with:
+      queue_python: '["3.12"]'
+      push_python: '["3.11"]'
+      shards: 6
+      queue_runner: anton
+      slow_command: "python -m pytest -m slow"
+```
+
+Why the merge queue tests one version (research of 20 October 2026):
+
+1. Batch several pull requests per merge test. A ten pull request queue needs 10, 4 or 2 extra pipelines at batch size 1, 3 or 5 ([Aviator batching](https://docs.aviator.co/mergequeue/concepts/batching)); GitHub ships groups of 30 or more ([how GitHub uses merge queue](https://github.blog/engineering/engineering-principles/how-github-uses-merge-queue-to-ship-hundreds-of-changes-every-day/), [merge queue settings](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-a-merge-queue)).
+2. Cap concurrent builds. Uber cut speculative builds per change from 3.39 to 1.85, weekly CPU hours by 35 to 52 percent and P95 wait by 32 to 45 percent ([Uber, 2025](https://arxiv.org/html/2501.03440); [Mergify performance](https://docs.mergify.com/merge-queue/performance)).
+3. Run a fast subset before merge and the full suite after merge, reverting a breaking change ([Google TAP](https://abseil.io/resources/swe-book/html/ch23.html)).
+4. Give pull request checks and image builds pod priority so queue shards cannot starve them ([Kubernetes pod priority](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/)).
+
+Rejected for now: paid queue products (Mergify, Trunk, Aviator) and predictive test selection ([Meta](https://engineering.fb.com/2018/11/21/developer-tools/predictive-test-selection/)), whose pytest tooling is immature.
+
+Local evidence: at 14:47 UTC on 20 October 2026 three agentihooks merge groups held 87 of 118 unfinished CI jobs against about 40 runners on a seven node cost cap, and pull request checks and an image build waited up to ten minutes for a runner.

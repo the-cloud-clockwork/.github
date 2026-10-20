@@ -104,14 +104,14 @@ jobs:
           SHARDS: ${{ inputs.shards }}
         run: |
           case "$EVENT" in
-            pull_request) stage=pr; versions="$PR_PYTHON"; shards=1 ;;
-            merge_group) stage=queue; versions="$QUEUE_PYTHON"; shards="$SHARDS" ;;
+            pull_request) stage="pr"; versions="$PR_PYTHON"; shards=1 ;;
+            merge_group) stage="queue"; versions="$QUEUE_PYTHON"; shards="$SHARDS" ;;
             push)
               if [[ "$REF" != "refs/heads/$PUSH_BRANCH" ]]; then
                 echo "::error::The push stage runs only on $PUSH_BRANCH, not $REF."
                 exit 1
               fi
-              stage=push; versions="$PUSH_PYTHON"; shards="$SHARDS" ;;
+              stage="push"; versions="$PUSH_PYTHON"; shards="$SHARDS" ;;
             *) echo "::error::No test stage for the $EVENT event."; exit 1 ;;
           esac
           matrix=$(jq -cn --argjson versions "$versions" --argjson shards "$shards" \

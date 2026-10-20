@@ -12,7 +12,7 @@ On your own machine, with a `gh` login that can read the repository:
 python3 automation/setup_repo.py --repo agentihooks --dry-run
 ```
 
-Drop `--dry-run` to apply. The workflow uses the organization CI GitHub App token. Writing a ruleset needs the App's repository **Administration: write** permission; a dry run asks only for read.
+Drop `--dry-run` to apply. The workflow signs in as the organization's agenticore GitHub App (org secrets `AGENTICORE_APP_ID` and `AGENTICORE_APP_PRIVATE_KEY`), because writing a ruleset needs the App's repository **Administration: write** permission and that App holds it. A dry run asks only for read.
 
 ## What it changes
 

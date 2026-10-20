@@ -16,7 +16,7 @@ on:
       push_python:
         description: "JSON list of Python versions for the push stage, run after merge"
         required: false
-        default: '["3.11"]'
+        default: '["3.12"]'
         type: string
       shards:
         description: "Shards per Python version in the merge group and push stages"

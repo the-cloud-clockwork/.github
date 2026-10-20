@@ -1,0 +1,252 @@
+name: Python Tests (Reusable)
+
+on:
+  workflow_call:
+    inputs:
+      pr_python:
+        description: "JSON list of Python versions for the pull request stage"
+        required: false
+        default: '["3.12"]'
+        type: string
+      queue_python:
+        description: "JSON list of Python versions for the merge group stage"
+        required: false
+        default: '["3.12"]'
+        type: string
+      push_python:
+        description: "JSON list of Python versions for the push stage, run after merge"
+        required: false
+        default: '["3.11"]'
+        type: string
+      shards:
+        description: "Shards per Python version in the merge group and push stages"
+        required: false
+        default: 4
+        type: number
+      pr_runner:
+        description: "Runner label for the pull request stage"
+        required: false
+        default: ubuntu-latest
+        type: string
+      queue_runner:
+        description: "Runner label for the merge group stage"
+        required: false
+        default: ubuntu-latest
+        type: string
+      push_runner:
+        description: "Runner label for the push stage"
+        required: false
+        default: ubuntu-latest
+        type: string
+      push_branch:
+        description: "Branch whose pushes run the push stage"
+        required: false
+        default: dev
+        type: string
+      install_command:
+        description: "Command that installs the project and its test dependencies"
+        required: false
+        default: 'pip install -e ".[dev]"'
+        type: string
+      pytest_args:
+        description: "Extra pytest arguments for every stage"
+        required: false
+        default: ""
+        type: string
+      test_paths:
+        description: "Space separated folders that hold the tests"
+        required: false
+        default: tests
+        type: string
+      full_suite_paths:
+        description: "Space separated path prefixes whose change runs the full suite on a pull request"
+        required: false
+        default: "pyproject.toml setup.cfg setup.py requirements conftest.py tests/conftest.py .github/"
+        type: string
+      slow_command:
+        description: "Command for the slow checks of the push stage; empty skips them"
+        required: false
+        default: ""
+        type: string
+      timeout_minutes:
+        description: "Timeout for each test job"
+        required: false
+        default: 20
+        type: number
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ${{ github.event_name == 'merge_group' && inputs.queue_runner || github.event_name == 'push' && inputs.push_runner || inputs.pr_runner }}
+    timeout-minutes: 5
+    outputs:
+      stage: ${{ steps.plan.outputs.stage }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      selection: ${{ steps.select.outputs.selection }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Choose the stage and its matrix
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          PUSH_BRANCH: ${{ inputs.push_branch }}
+          PR_PYTHON: ${{ inputs.pr_python }}
+          QUEUE_PYTHON: ${{ inputs.queue_python }}
+          PUSH_PYTHON: ${{ inputs.push_python }}
+          SHARDS: ${{ inputs.shards }}
+        run: |
+          case "$EVENT" in
+            pull_request) stage=pr; versions="$PR_PYTHON"; shards=1 ;;
+            merge_group) stage=queue; versions="$QUEUE_PYTHON"; shards="$SHARDS" ;;
+            push)
+              if [[ "$REF" != "refs/heads/$PUSH_BRANCH" ]]; then
+                echo "::error::The push stage runs only on $PUSH_BRANCH, not $REF."
+                exit 1
+              fi
+              stage=push; versions="$PUSH_PYTHON"; shards="$SHARDS" ;;
+            *) echo "::error::No test stage for the $EVENT event."; exit 1 ;;
+          esac
+          matrix=$(jq -cn --argjson versions "$versions" --argjson shards "$shards" \
+            '{include: [$versions[] as $v | range(1; $shards + 1) as $s | {python: $v, shard: $s, shards: $shards}]}')
+          [[ "$(jq '.include | length' <<< "$matrix")" -gt 0 ]] || { echo "::error::The $stage stage has no Python versions."; exit 1; }
+          echo "stage=$stage" >> "$GITHUB_OUTPUT"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          echo "$stage stage: $matrix"
+
+      # Changed test files run as they are; a changed module runs the test files that import it.
+      - name: Select the tests the change touches
+        id: select
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          TEST_PATHS: ${{ inputs.test_paths }}
+          FULL_SUITE_PATHS: ${{ inputs.full_suite_paths }}
+        run: |
+          mapfile -t changed < <(git diff --name-only "$BASE...HEAD")
+          read -ra full <<< "$FULL_SUITE_PATHS"
+          read -ra roots <<< "$TEST_PATHS"
+          for path in "${changed[@]}"; do
+            for prefix in "${full[@]}"; do
+              if [[ "$path" == "$prefix"* ]]; then
+                echo "$path changes shared test inputs; the full suite runs."
+                echo "selection=all" >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            done
+          done
+          selected=()
+          for path in "${changed[@]}"; do
+            [[ "$path" == *.py && -f "$path" ]] || continue
+            for root in "${roots[@]}"; do
+              if [[ "$path" == "$root/"* && "$(basename "$path")" == test_*.py ]]; then
+                selected+=("$path")
+                continue 2
+              fi
+            done
+            module="${path%.py}"
+            module="${module%/__init__}"
+            module="${module//\//.}"
+            while IFS= read -r test; do
+              selected+=("$test")
+            done < <(grep -rlE --include='test_*.py' "(from|import)[[:space:]]+${module//./\\.}([[:space:].]|$)" "${roots[@]}" 2>/dev/null || true)
+          done
+          if [[ "${#selected[@]}" -eq 0 ]]; then
+            echo "No test file reaches the change; no tests run."
+            echo "selection=none" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          selection=$(printf '%s\n' "${selected[@]}" | sort -u | paste -sd' ')
+          echo "Selected: $selection"
+          echo "selection=$selection" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: test (${{ matrix.python }}, ${{ matrix.shard }}/${{ matrix.shards }})
+    needs: plan
+    if: needs.plan.outputs.selection != 'none'
+    runs-on: ${{ github.event_name == 'merge_group' && inputs.queue_runner || github.event_name == 'push' && inputs.push_runner || inputs.pr_runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    strategy:
+      fail-fast: ${{ github.event_name == 'merge_group' }}
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        env:
+          INSTALL_COMMAND: ${{ inputs.install_command }}
+        run: |
+          bash -c "$INSTALL_COMMAND"
+          python -m pip install pytest-split
+
+      - name: Run tests
+        env:
+          SELECTION: ${{ needs.plan.outputs.selection }}
+          TEST_PATHS: ${{ inputs.test_paths }}
+          PYTEST_ARGS: ${{ inputs.pytest_args }}
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
+        run: |
+          read -ra targets <<< "$TEST_PATHS"
+          if [[ -n "$SELECTION" && "$SELECTION" != all ]]; then
+            read -ra targets <<< "$SELECTION"
+          fi
+          read -ra extra <<< "$PYTEST_ARGS"
+          python -m pytest "${targets[@]}" --splits "$SHARDS" --group "$SHARD" "${extra[@]}"
+
+  slow:
+    needs: plan
+    if: needs.plan.outputs.stage == 'push' && inputs.slow_command != ''
+    runs-on: ${{ inputs.push_runner }}
+    timeout-minutes: ${{ inputs.timeout_minutes }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ fromJSON(inputs.queue_python)[0] }}
+
+      - name: Install dependencies
+        env:
+          INSTALL_COMMAND: ${{ inputs.install_command }}
+        run: bash -c "$INSTALL_COMMAND"
+
+      - name: Run the slow checks
+        env:
+          SLOW_COMMAND: ${{ inputs.slow_command }}
+        run: bash -c "$SLOW_COMMAND"
+
+  required:
+    name: Python Tests — Required
+    needs: [plan, test, slow]
+    if: ${{ always() }}
+    runs-on: ${{ github.event_name == 'merge_group' && inputs.queue_runner || github.event_name == 'push' && inputs.push_runner || inputs.pr_runner }}
+    timeout-minutes: 5
+    steps:
+      - name: Require every stage job to pass or skip by design
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          SELECTION: ${{ needs.plan.outputs.selection }}
+          STAGE: ${{ needs.plan.outputs.stage }}
+          SLOW: ${{ inputs.slow_command != '' }}
+        run: |
+          jq -e --arg selection "$SELECTION" --arg stage "$STAGE" --arg slow "$SLOW" '
+            .plan.result == "success"
+            and (.test.result == "success" or (.test.result == "skipped" and $selection == "none"))
+            and (.slow.result == "success" or (.slow.result == "skipped" and ($stage != "push" or $slow == "false")))
+          ' <<< "$NEEDS" || { echo "::error::A test stage job did not pass: $NEEDS"; exit 1; }

@@ -13,7 +13,7 @@ DEV_REF = f"refs/heads/{BRANCH}"
 SETUP_BRANCH = "ci-standard-setup"
 CALLER_PATH = ".github/workflows/shared-tests.yml"
 CALLER_SOURCE = Path(__file__).with_name("shared-tests.yml")
-TEST_RUN = re.compile(r"^(?!\s*#).*?(?<![\w.-])(pytest|python-tests-reusable\.yml)(?![\w-])", re.MULTILINE)
+TEST_RUN = re.compile(r"^(?!\s*#).*?(?<![\w.-])(pytest|python-tests-reusable\.yml)(?![\w.-])", re.MULTILINE)
 RULESET_FIELDS = ("name", "target", "enforcement", "conditions", "rules", "bypass_actors")
 
 MERGE_QUEUE = {

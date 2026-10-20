@@ -19,6 +19,10 @@ The-Cloud-Clock-Work/.github/.github/workflows/<name>@main
 | `pypi-publish-reusable.yml` | Build + publish to PyPI via OIDC | `python_version` | _(OIDC trusted publishers)_ |
 | `docs-audit-reusable.yml` | Claude-powered docs audit with MCP (self-contained prompt) | `scope`, `extra_instructions`, `anthropic_url_base` (required), + more | `ANTHROPIC_TOKEN_BASE`, `TCC_CI_CLIENT_ID`, `TCC_CI_APP_PRIVATE_KEY`, `MCP_API_KEY` |
 
+## Automation
+
+`automation/` holds the setup that gives a repository the org CI standard (merge queue settings and the shared test caller) and a README on why our CI works this way. Run it from **Actions → Setup repository**.
+
 ## Workflow Templates
 
 | Template | Description |

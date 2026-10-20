@@ -61,7 +61,7 @@ on:
       full_suite_paths:
         description: "Space separated path prefixes whose change runs the full suite on a pull request"
         required: false
-        default: "pyproject.toml setup.cfg setup.py requirements conftest.py tests/conftest.py .github/"
+        default: "pyproject.toml setup.cfg setup.py pytest.ini tox.ini .coveragerc requirements conftest.py tests/conftest.py .github/"
         type: string
       slow_command:
         description: "Command for the slow checks of the push stage; empty skips them"
@@ -130,7 +130,8 @@ jobs:
           TEST_PATHS: ${{ inputs.test_paths }}
           FULL_SUITE_PATHS: ${{ inputs.full_suite_paths }}
         run: |
-          mapfile -t changed < <(git diff --name-only "$BASE...HEAD")
+          git diff --name-only "$BASE...HEAD" > "$RUNNER_TEMP/changed.txt"
+          mapfile -t changed < "$RUNNER_TEMP/changed.txt"
           read -ra full <<< "$FULL_SUITE_PATHS"
           read -ra roots <<< "$TEST_PATHS"
           for path in "${changed[@]}"; do
@@ -144,7 +145,17 @@ jobs:
           done
           selected=()
           for path in "${changed[@]}"; do
-            [[ "$path" == *.py && -f "$path" ]] || continue
+            [[ -f "$path" ]] || continue
+            if [[ "$path" != *.py ]]; then
+              for root in "${roots[@]}"; do
+                if [[ "$path" == "$root/"* ]]; then
+                  echo "$path is test data; the full suite runs."
+                  echo "selection=all" >> "$GITHUB_OUTPUT"
+                  exit 0
+                fi
+              done
+              continue
+            fi
             for root in "${roots[@]}"; do
               if [[ "$path" == "$root/"* && "$(basename "$path")" == test_*.py ]]; then
                 selected+=("$path")

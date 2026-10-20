@@ -183,11 +183,11 @@ Three stages, chosen by the event that called the workflow:
 
 | Event | Runs | Purpose |
 |-------|------|---------|
-| `pull_request` | Only the test files the change touches, on `pr_python` | Fast feedback before the queue |
+| `pull_request` | Changed test files and the test files that import a changed module, on `pr_python` | Fast feedback before the queue |
 | `merge_group` | The full suite on `queue_python` (default 3.12), split into `shards` jobs | The one check that gates the merge |
 | `push` to `push_branch` | The full suite on `push_python` (default 3.11) plus `slow_command` | Coverage of other versions and slow checks after merge, gating promotion only |
 
-A changed file under `full_suite_paths` (dependency files, conftest, workflows) runs the whole suite on a pull request. Make the ruleset require the aggregator check, `<caller job> / Python Tests — Required`, never the per shard checks.
+A changed file under `full_suite_paths` (dependency and pytest configuration, conftest, workflows), a changed non Python file under `test_paths`, or a changed module no test imports directly runs the whole suite on a pull request. A test that reaches a changed module only through another module is not selected; the merge queue's full run catches it. Make the ruleset require the aggregator check, `<caller job> / Python Tests — Required`, never the per shard checks.
 
 ```yaml
 # .github/workflows/tests.yml

@@ -13,7 +13,7 @@ DEV_REF = f"refs/heads/{BRANCH}"
 SETUP_BRANCH = "ci-standard-setup"
 CALLER_PATH = ".github/workflows/shared-tests.yml"
 CALLER_SOURCE = Path(__file__).with_name("shared-tests.yml")
-TEST_MARKERS = ("pytest", "python-tests-reusable.yml")
+TEST_RUN = re.compile(r"^(?!\s*#).*?(?<![\w.-])(pytest|python-tests-reusable\.yml)(?![\w-])", re.MULTILINE)
 RULESET_FIELDS = ("name", "target", "enforcement", "conditions", "rules", "bypass_actors")
 
 MERGE_QUEUE = {
@@ -94,8 +94,12 @@ def stored_payload(repo: str, ruleset_name: str) -> tuple[str, dict] | None:
 
 def own_test_workflows(repo: str) -> list[str]:
     listed = gh([f"repos/{ORG}/{repo}/contents/.github/workflows?ref={BRANCH}"]) or []
-    paths = [item["path"] for item in listed if item["path"].endswith((".yml", ".yaml")) and item["path"] != CALLER_PATH]
-    return [path for path in paths if any(marker in read_file(repo, path, BRANCH)[0] for marker in TEST_MARKERS)]
+    paths = [
+        item["path"]
+        for item in listed
+        if item["type"] == "file" and item["path"].endswith((".yml", ".yaml")) and item["path"] != CALLER_PATH
+    ]
+    return [path for path in paths if TEST_RUN.search((read_file(repo, path, BRANCH) or ("",))[0])]
 
 
 def planned_files(repo: str, stored: tuple[str, dict] | None, body: dict, own_tests: list[str]) -> dict[str, str]:
@@ -176,6 +180,10 @@ def main() -> None:
     print(f"merge queue after:  {json.dumps(after['parameters'], sort_keys=True)}")
     if own_tests:
         print(f"shared test caller: skipped, the repository runs its own tests in {', '.join(own_tests)}")
+        if read_file(args.repo, CALLER_PATH, BRANCH):
+            print(f"shared test caller: {CALLER_PATH} is already on {BRANCH}; remove it by hand")
+    else:
+        print("shared test caller: planned, no workflow on dev runs tests")
     print(f"pull request into {BRANCH} from {SETUP_BRANCH}: {', '.join(files) or 'nothing to change'}")
     if args.dry_run:
         print("\n--- ruleset body ---")

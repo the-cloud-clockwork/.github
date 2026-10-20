@@ -30,6 +30,8 @@ Drop `--dry-run` to apply. The workflow signs in as the organization's agenticor
 
 2. **A pull request into `dev`** that adds `.github/workflows/shared-tests.yml`, a short workflow that calls the shared test workflow in this repository (`python-tests-reusable.yml`). The copy it adds is [`shared-tests.yml`](shared-tests.yml) in this folder.
 
+   A repository that already runs its own tests gets no caller: when any other workflow on its `dev` branch names `pytest` or `python-tests-reusable.yml` on a line that is not a comment, the setup prints `shared test caller: skipped` with the workflows it found and leaves the test setup alone. A caller already on `dev` in such a repository is reported for removal by hand; the setup does not delete it. Two test workflows would run every suite twice and fight for the same runners.
+
 ## Why our CI works this way
 
 ### Test several pull requests together

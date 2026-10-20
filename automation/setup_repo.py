@@ -13,6 +13,7 @@ DEV_REF = f"refs/heads/{BRANCH}"
 SETUP_BRANCH = "ci-standard-setup"
 CALLER_PATH = ".github/workflows/shared-tests.yml"
 CALLER_SOURCE = Path(__file__).with_name("shared-tests.yml")
+TEST_RUN = re.compile(r"^(?!\s*#).*?(?<![\w.-])(pytest|python-tests-reusable\.yml)(?![\w.-])", re.MULTILINE)
 RULESET_FIELDS = ("name", "target", "enforcement", "conditions", "rules", "bypass_actors")
 
 MERGE_QUEUE = {
@@ -91,10 +92,20 @@ def stored_payload(repo: str, ruleset_name: str) -> tuple[str, dict] | None:
     return (path, json.loads(found[0])) if found else None
 
 
-def planned_files(repo: str, stored: tuple[str, dict] | None, body: dict) -> dict[str, str]:
+def own_test_workflows(repo: str) -> list[str]:
+    listed = gh([f"repos/{ORG}/{repo}/contents/.github/workflows?ref={BRANCH}"]) or []
+    paths = [
+        item["path"]
+        for item in listed
+        if item["type"] == "file" and item["path"].endswith((".yml", ".yaml")) and item["path"] != CALLER_PATH
+    ]
+    return [path for path in paths if TEST_RUN.search((read_file(repo, path, BRANCH) or ("",))[0])]
+
+
+def planned_files(repo: str, stored: tuple[str, dict] | None, body: dict, own_tests: list[str]) -> dict[str, str]:
     files = {}
     caller = read_file(repo, CALLER_PATH, BRANCH)
-    if not caller or caller[0] != CALLER_SOURCE.read_text():
+    if not own_tests and (not caller or caller[0] != CALLER_SOURCE.read_text()):
         files[CALLER_PATH] = CALLER_SOURCE.read_text()
     if stored and stored[1]["rules"] != body["rules"]:
         files[stored[0]] = json.dumps({**stored[1], "rules": body["rules"]}, indent=2) + "\n"
@@ -157,7 +168,8 @@ def main() -> None:
         sys.exit(f"{args.repo}: no dev ruleset to add the merge queue to; protect dev first")
     stored = stored_payload(args.repo, ruleset["name"])
     body = ruleset_body(ruleset, stored)
-    files = planned_files(args.repo, stored, body)
+    own_tests = own_test_workflows(args.repo)
+    files = planned_files(args.repo, stored, body, own_tests)
     before = next((rule for rule in ruleset["rules"] if rule["type"] == "merge_queue"), None)
     after = next(rule for rule in body["rules"] if rule["type"] == "merge_queue")
 
@@ -166,6 +178,12 @@ def main() -> None:
     print(f"ruleset source: {stored[0] if stored else 'live ruleset'}")
     print(f"merge queue before: {json.dumps((before or {}).get('parameters'), sort_keys=True)}")
     print(f"merge queue after:  {json.dumps(after['parameters'], sort_keys=True)}")
+    if own_tests:
+        print(f"shared test caller: skipped, the repository runs its own tests in {', '.join(own_tests)}")
+        if read_file(args.repo, CALLER_PATH, BRANCH):
+            print(f"shared test caller: {CALLER_PATH} is already on {BRANCH}; remove it by hand")
+    else:
+        print("shared test caller: planned, no workflow on dev runs tests")
     print(f"pull request into {BRANCH} from {SETUP_BRANCH}: {', '.join(files) or 'nothing to change'}")
     if args.dry_run:
         print("\n--- ruleset body ---")

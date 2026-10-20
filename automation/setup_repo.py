@@ -2,6 +2,7 @@
 import argparse
 import base64
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -21,7 +22,7 @@ MERGE_QUEUE = {
     "min_entries_to_merge": 1,
     "min_entries_to_merge_wait_minutes": 1,
 }
-MERGE_QUEUE_DEFAULTS = {"check_response_timeout_minutes": 60, "merge_method": "SQUASH"}
+MERGE_QUEUE_DEFAULTS = {"check_response_timeout_minutes": 25, "merge_method": "SQUASH"}
 
 
 def gh(args: list[str], body: dict | None = None) -> dict | list | None:
@@ -45,7 +46,8 @@ def protects_dev(ruleset: dict) -> bool:
 
 def dev_ruleset(repo: str) -> dict | None:
     summaries = gh([f"repos/{ORG}/{repo}/rulesets"]) or []
-    rulesets = [gh([f"repos/{ORG}/{repo}/rulesets/{item['id']}"]) for item in summaries]
+    own = [item for item in summaries if item.get("source_type") == "Repository"]
+    rulesets = [gh([f"repos/{ORG}/{repo}/rulesets/{item['id']}"]) for item in own]
     dev = [item for item in rulesets if item and item["target"] == "branch" and protects_dev(item)]
     queued = [item for item in dev if any(rule["type"] == "merge_queue" for rule in item["rules"])]
     if len(queued) > 1:
@@ -63,19 +65,10 @@ def with_merge_queue(rules: list[dict]) -> list[dict]:
     return [queue if rule is current else rule for rule in rules]
 
 
-def ruleset_body(ruleset: dict | None, stored: tuple[str, dict] | None) -> dict:
+def ruleset_body(ruleset: dict, stored: tuple[str, dict] | None) -> dict:
     if stored:
         body = {key: stored[1][key] for key in RULESET_FIELDS if key in stored[1]}
         return {**body, "rules": with_merge_queue(body["rules"])}
-    if ruleset is None:
-        return {
-            "name": "dev-merge-queue",
-            "target": "branch",
-            "enforcement": "active",
-            "conditions": {"ref_name": {"include": [DEV_REF], "exclude": []}},
-            "rules": with_merge_queue([]),
-            "bypass_actors": [],
-        }
     body = {key: ruleset[key] for key in RULESET_FIELDS if key in ruleset}
     body["rules"] = with_merge_queue(
         [{key: rule[key] for key in ("type", "parameters") if rule.get(key) is not None} for rule in ruleset["rules"]]
@@ -103,12 +96,10 @@ def planned_files(repo: str, stored: tuple[str, dict] | None, body: dict) -> dic
     return {path: text for path, text in files.items() if (read_file(repo, path, BRANCH) or ("",))[0] != text}
 
 
-def apply_ruleset(repo: str, ruleset: dict | None, body: dict) -> None:
-    endpoint = f"repos/{ORG}/{repo}/rulesets"
-    if ruleset is None:
-        written = gh([endpoint, "--method", "POST"], body)
-    else:
-        written = gh([f"{endpoint}/{ruleset['id']}", "--method", "PUT"], body)
+def apply_ruleset(repo: str, ruleset: dict, body: dict) -> None:
+    written = gh([f"repos/{ORG}/{repo}/rulesets/{ruleset['id']}", "--method", "PUT"], body)
+    if not written:
+        sys.exit(f"{repo}: ruleset {ruleset['id']} not found on write")
     queue = next(rule for rule in written["rules"] if rule["type"] == "merge_queue")
     if any(queue["parameters"][key] != value for key, value in MERGE_QUEUE.items()):
         sys.exit(f"{repo}: merge queue readback differs: {queue['parameters']}")
@@ -153,16 +144,20 @@ def main() -> None:
     parser.add_argument("--repo", required=True, help="repository name in the organization")
     parser.add_argument("--dry-run", action="store_true", help="print the settings and files without writing")
     args = parser.parse_args()
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.repo):
+        parser.error(f"not a repository name: {args.repo}")
 
     ruleset = dev_ruleset(args.repo)
-    stored = stored_payload(args.repo, ruleset["name"]) if ruleset else None
+    if ruleset is None:
+        sys.exit(f"{args.repo}: no dev ruleset to add the merge queue to; protect dev first")
+    stored = stored_payload(args.repo, ruleset["name"])
     body = ruleset_body(ruleset, stored)
     files = planned_files(args.repo, stored, body)
-    before = next((rule for rule in (ruleset or {"rules": []})["rules"] if rule["type"] == "merge_queue"), None)
+    before = next((rule for rule in ruleset["rules"] if rule["type"] == "merge_queue"), None)
     after = next(rule for rule in body["rules"] if rule["type"] == "merge_queue")
 
     print(f"repository: {ORG}/{args.repo}")
-    print(f"dev ruleset: {body['name']} ({ruleset['id'] if ruleset else 'new'})")
+    print(f"dev ruleset: {body['name']} ({ruleset['id']})")
     print(f"ruleset source: {stored[0] if stored else 'live ruleset'}")
     print(f"merge queue before: {json.dumps((before or {}).get('parameters'), sort_keys=True)}")
     print(f"merge queue after:  {json.dumps(after['parameters'], sort_keys=True)}")

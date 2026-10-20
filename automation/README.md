@@ -12,7 +12,7 @@ On your own machine, with a `gh` login that can read the repository:
 python3 automation/setup_repo.py --repo agentihooks --dry-run
 ```
 
-Drop `--dry-run` to apply. The workflow signs in as the organization's agenticore GitHub App (org secrets `AGENTICORE_APP_ID` and `AGENTICORE_APP_PRIVATE_KEY`), because writing a ruleset needs the App's repository **Administration: write** permission and that App holds it. A dry run asks only for read.
+Drop `--dry-run` to apply. The workflow signs in as the organization's agenticore GitHub App (org secrets `AGENTICORE_APP_ID` and `AGENTICORE_APP_PRIVATE_KEY`), because writing a ruleset needs the App's repository **Administration: write** permission and that App holds it. The App also needs write on contents, pull requests and workflows to open the pull request. A dry run asks only for read.
 
 ## What it changes
 
@@ -26,7 +26,7 @@ Drop `--dry-run` to apply. The workflow signs in as the organization's agenticor
    | Wait for a group to fill | 1 minute | `min_entries_to_merge_wait_minutes` |
    | Merge only pull requests whose checks pass | on | Only merge non-failing pull requests (`ALLGREEN`) |
 
-   The check timeout and merge method already on the ruleset stay as they are. When the repository keeps its ruleset as a file under `.github/rulesets/`, the setup changes the same numbers in that file too, so the organization's ruleset sync does not put the old numbers back.
+   The check timeout and merge method already on the ruleset stay as they are. A repository with no `dev` ruleset is refused: protect `dev` first. When the repository keeps its ruleset as a file under `.github/rulesets/`, the setup changes the same numbers in that file too, so the ruleset sync that antoncore runs on every push to its `dev` does not put the old numbers back.
 
 2. **A pull request into `dev`** that adds `.github/workflows/shared-tests.yml`, a short workflow that calls the shared test workflow in this repository (`python-tests-reusable.yml`). The copy it adds is [`shared-tests.yml`](shared-tests.yml) in this folder.
 
@@ -44,13 +44,13 @@ The one minute wait lets a second and third pull request join a group instead of
 
 GitHub can test several groups at once, each one guessing that the groups ahead of it will pass. Every wrong guess throws away a full test run, and those runs fight the pull request checks for the same runners.
 
-Uber measured this on its own queue: limiting how many of these guessed builds run cut the builds per change from 3.39 to 1.85, cut weekly CPU hours by 35 to 52 percent, and cut the slowest waits (95th percentile) by 32 to 45 percent ([Uber, arXiv 2501.03440](https://arxiv.org/html/2501.03440)). Mergify gives the same advice on queue speed ([Mergify, performance](https://docs.mergify.com/merge-queue/performance)).
+Uber measured this on its own queue: limiting how many of these guessed builds run cut the builds per change from 3.39 to 1.85, cut weekly CPU hours by 35 to 52 percent, and cut the slowest waits (95th percentile) by 32 to 45 percent ([Uber, arXiv 2501.03440](https://arxiv.org/html/2501.03440)). Mergify's page on queue speed covers the same trade off ([Mergify, performance](https://docs.mergify.com/merge-queue/performance)).
 
 What we saw ourselves: at 14:47 UTC on 20 October, three agentihooks merge groups held 87 of 118 unfinished CI jobs against about 40 runners on a seven node cost cap. Pull request checks and the hive image build waited up to ten minutes for a runner.
 
 ### A quick check before merge, the full check after
 
-Google runs a fast part of its tests before a change goes in and the full set after, and undoes a change that breaks the full set ([Software Engineering at Google, chapter 23](https://abseil.io/resources/swe-book/html/ch23.html)). The shared test workflow does the same: a pull request runs only the tests its change touches, the merge queue runs the unit tests on one Python version, and the other Python versions and the slow checks run after the merge on `dev`. A failure there holds the release and gets fixed by the next pull request.
+Google runs a fast part of its tests before a change goes in and the full set after, and undoes a change that breaks the full set ([Software Engineering at Google, chapter 23](https://abseil.io/resources/swe-book/html/ch23.html)). The shared test workflow is built the same way: a pull request runs only the tests its change touches, the merge queue runs the unit tests on one Python version, and the other Python versions and the slow checks run after the merge on `dev`. A failure there holds the release and gets fixed by the next pull request.
 
 ### Keep pull request checks from waiting
 

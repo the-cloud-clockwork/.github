@@ -36,9 +36,9 @@ jobs:
           repositories: ${{ inputs.repo }}
           permission-metadata: read
           permission-administration: ${{ inputs.dry_run && 'read' || 'write' }}
-          permission-contents: write
-          permission-pull-requests: write
-          permission-workflows: write
+          permission-contents: ${{ inputs.dry_run && 'read' || 'write' }}
+          permission-pull-requests: ${{ inputs.dry_run && 'read' || 'write' }}
+          permission-workflows: ${{ inputs.dry_run && 'read' || 'write' }}
 
       - name: Apply the CI standard
         env:

@@ -173,7 +173,7 @@ jobs:
             pattern="(from|import)[[:space:]]+${module//./\\.}([[:space:].]|$)"
             if [[ "$module" == *.* ]]; then
               parent="${module%.*}"
-              pattern="$pattern|from[[:space:]]+${parent//./\\.}[[:space:]]+import[[:space:]].*\\b${module##*.}\\b"
+              pattern="$pattern|from[[:space:]]+${parent//./\\.}[[:space:]]+import[[:space:]](.*\\b${module##*.}\\b|[[:space:]]*\\()"
             fi
             mapfile -t importers < <(grep -rlE --include='test_*.py' "$pattern" "${roots[@]}" 2>/dev/null || true)
             if [[ "${#importers[@]}" -eq 0 ]]; then

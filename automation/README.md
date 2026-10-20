@@ -32,6 +32,10 @@ Drop `--dry-run` to apply. The workflow signs in as the organization's agenticor
 
    A repository that already runs its own tests gets no caller: when any other workflow on its `dev` branch names `pytest` or `python-tests-reusable.yml` on a line that is not a comment, the setup prints `shared test caller: skipped` with the workflows it found and leaves the test setup alone. A caller already on `dev` in such a repository is reported for removal by hand; the setup does not delete it. Two test workflows would run every suite twice and fight for the same runners.
 
+## Merging into `dev`
+
+Every pull request reaches `dev` through the merge queue. Queue it with the GraphQL `enqueuePullRequest` mutation; swarm agents run `agentihooks swarm <slug> merge queue <url>`, which calls it. Never merge it with `gh pr merge`: the gh on the swarm host (2.4.0) predates merge queues and calls the direct merge instead, and agentihooks lists the admin role as a bypass actor of the `dev-no-delete` ruleset that holds the queue (its `.github/rulesets/README.md`), so GitHub lands the pull request past the queue. Each such merge cancels the group the queue is building: on 20 October agentihooks pull requests 5332 (18:55 UTC) and 5327 (19:00 UTC) merged this way, the first cancelled merge group run 39479040017, and queue head 5264 waited on checks from 18:24 past 19:05. The agentihooks prod lockdown guard refuses `gh pr merge` into a branch with a merge queue unless the operator turned on `disable controls`.
+
 ## Why our CI works this way
 
 ### Test several pull requests together

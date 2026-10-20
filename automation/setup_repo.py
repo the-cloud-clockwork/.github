@@ -52,6 +52,8 @@ def dev_ruleset(repo: str) -> dict | None:
     queued = [item for item in dev if any(rule["type"] == "merge_queue" for rule in item["rules"])]
     if len(queued) > 1:
         sys.exit(f"{repo}: more than one dev ruleset carries a merge queue")
+    if not queued and len(dev) > 1:
+        sys.exit(f"{repo}: several dev rulesets and none carries a merge queue; pick one by hand")
     return (queued or dev or [None])[0]
 
 
@@ -90,10 +92,13 @@ def stored_payload(repo: str, ruleset_name: str) -> tuple[str, dict] | None:
 
 
 def planned_files(repo: str, stored: tuple[str, dict] | None, body: dict) -> dict[str, str]:
-    files = {CALLER_PATH: CALLER_SOURCE.read_text()}
-    if stored:
+    files = {}
+    caller = read_file(repo, CALLER_PATH, BRANCH)
+    if not caller or caller[0] != CALLER_SOURCE.read_text():
+        files[CALLER_PATH] = CALLER_SOURCE.read_text()
+    if stored and stored[1]["rules"] != body["rules"]:
         files[stored[0]] = json.dumps({**stored[1], "rules": body["rules"]}, indent=2) + "\n"
-    return {path: text for path, text in files.items() if (read_file(repo, path, BRANCH) or ("",))[0] != text}
+    return files
 
 
 def apply_ruleset(repo: str, ruleset: dict, body: dict) -> None:
@@ -144,7 +149,7 @@ def main() -> None:
     parser.add_argument("--repo", required=True, help="repository name in the organization")
     parser.add_argument("--dry-run", action="store_true", help="print the settings and files without writing")
     args = parser.parse_args()
-    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.repo):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", args.repo) or args.repo in (".", ".."):
         parser.error(f"not a repository name: {args.repo}")
 
     ruleset = dev_ruleset(args.repo)
@@ -170,9 +175,9 @@ def main() -> None:
             print(text, end="")
         return
 
-    apply_ruleset(args.repo, ruleset, body)
     if files:
         open_pull_request(args.repo, files)
+    apply_ruleset(args.repo, ruleset, body)
 
 
 if __name__ == "__main__":

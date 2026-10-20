@@ -20,7 +20,7 @@ Drop `--dry-run` to apply. The workflow signs in as the organization's agenticor
 
    | Setting | Value | GitHub's name |
    |---|---|---|
-   | Test one group at a time | 1 | Build concurrency (`max_entries_to_build`) |
+   | Build entries in parallel | 5 | Build concurrency (`max_entries_to_build`) |
    | Smallest group | 1 | Minimum group size (`min_entries_to_merge`) |
    | Largest group | 5 | Maximum group size (`max_entries_to_merge`) |
    | Wait for a group to fill | 1 minute | `min_entries_to_merge_wait_minutes` |
@@ -46,13 +46,11 @@ Aviator's documentation works the numbers: a queue of 10 pull requests needs 10 
 
 The one minute wait lets a second and third pull request join a group instead of each starting its own run a few seconds apart.
 
-### Test one group at a time
+### Build enough entries to fill a group
 
-GitHub can test several groups at once, each one guessing that the groups ahead of it will pass. Every wrong guess throws away a full test run, and those runs fight the pull request checks for the same runners.
+GitHub's build concurrency limits the number of pull requests it builds at once. It must match the largest group size of five so the queue can build a group containing five pull requests. A value of one restricted agentihooks to groups of one even though the largest group size was five.
 
-Uber measured this on its own queue: limiting how many of these guessed builds run cut the builds per change from 3.39 to 1.85, cut weekly CPU hours by 35 to 52 percent, and cut the slowest waits (95th percentile) by 32 to 45 percent ([Uber, arXiv 2501.03440](https://arxiv.org/html/2501.03440)). Mergify's page on queue speed covers the same trade off ([Mergify, performance](https://docs.mergify.com/merge-queue/performance)).
-
-What we saw ourselves: at 14:47 UTC on 20 October, three agentihooks merge groups held 87 of 118 unfinished CI jobs against about 40 runners on a seven node cost cap. Pull request checks and the hive image build waited up to ten minutes for a runner.
+Concurrency stays bounded at five to limit speculative builds and competition with pull request checks. Uber measured that limiting speculative builds reduced builds per change from 3.39 to 1.85 and weekly CPU hours by 35 to 52 percent ([Uber, arXiv 2501.03440](https://arxiv.org/html/2501.03440)). Those results support bounding concurrency; they do not imply that GitHub's build concurrency should be one.
 
 ### A quick check before merge, the full check after
 

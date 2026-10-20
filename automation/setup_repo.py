@@ -18,7 +18,7 @@ RULESET_FIELDS = ("name", "target", "enforcement", "conditions", "rules", "bypas
 
 MERGE_QUEUE = {
     "grouping_strategy": "ALLGREEN",
-    "max_entries_to_build": 1,
+    "max_entries_to_build": 5,
     "max_entries_to_merge": 5,
     "min_entries_to_merge": 1,
     "min_entries_to_merge_wait_minutes": 1,
